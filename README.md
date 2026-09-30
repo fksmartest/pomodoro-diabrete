@@ -66,6 +66,7 @@ No KDE Plasma, os dois últimos saem de graça: **Meta + arrastar** move a janel
   - [Notificação do sistema](#notificação-do-sistema)
 - [Tamanho da janela](#tamanho-da-janela)
 - [Persistência entre sessões](#persistência-entre-sessões)
+- [Atalho no menu (Linux)](#atalho-no-menu-linux)
 - [Arquitetura](#arquitetura)
   - [Módulos](#módulos)
   - [API de `pet.py`](#api-de-petpy)
@@ -261,6 +262,30 @@ Focos concluidos (ultimos 5 dias com registro):
 
 ---
 
+## Atalho no menu (Linux)
+
+Para abrir pelo menu de aplicativos ou fixar na barra de tarefas:
+
+```bash
+./desktop/install.sh --scale 3      # os argumentos viram o Exec do lançador
+```
+
+Instala em `$XDG_DATA_HOME` (ou `~/.local/share`), sem `sudo` e sem tocar em nada do sistema. Depois procure por *Pomodoro Pet* no menu; para fixar no painel, botão direito no item → fixar. Para remover, `./desktop/install.sh --uninstall`.
+
+O instalador resolve sozinho o interpretador (prefere o `.venv/` do projeto), o caminho do app e um terminal para a ação *Ver focos por dia*, que roda o `--stats`. Sem terminal instalado, a ação é omitida em vez de virar um lançador quebrado.
+
+### O ícone é o próprio bichinho
+
+Nenhum arquivo de imagem no repositório: `desktop/make_icons.py` instancia a janela headless, chama o mesmo `_sprite()` que desenha o personagem na tela e salva os sete tamanhos que o tema de ícones espera. Ampliação com nearest-neighbor, redução com suavização.
+
+O estado escolhido é energia 52 — baixa o bastante para os chifres e a cauda já terem nascido, alta o bastante para ele estar sorrindo — em `t = 1.0`, porque em `t = 0` ele está justamente no frame da piscada.
+
+### Barra de tarefas
+
+O app define `WM_CLASS` como `pomodoro-pet` (via `SDL_VIDEO_X11_WMCLASS` e `SDL_VIDEO_WAYLAND_WMCLASS`) e o `.desktop` declara o mesmo em `StartupWMClass`. Sem isso o SDL usaria o nome do processo — `python` — e o painel mostraria um ícone genérico sem agrupar a janela com o lançador.
+
+---
+
 ## Arquitetura
 
 O projeto separa **regra de negócio** de **apresentação**. `pet.py` não importa Pygame, o que permite testar toda a mecânica sem abrir janela.
@@ -433,6 +458,10 @@ pomodoro-diabrete/
 ├── sound.py                   # bipes sintetizados (sem assets)
 ├── notify.py                  # notificação do sistema (sem dependência)
 ├── storage.py                 # estado em disco e regra de retomada
+├── desktop/                   # lançador Linux (.desktop + ícones gerados)
+│   ├── install.sh
+│   ├── make_icons.py
+│   └── pomodoro-pet.desktop.in
 ├── requirements.txt
 ├── README.md
 └── tests/
@@ -443,6 +472,7 @@ pomodoro-diabrete/
     ├── test_scale.py          # escala da janela e mapeamento do mouse
     ├── test_notify.py         # backends de notificação, com dublês
     ├── test_storage.py        # persistência, retomada e histórico
+    ├── test_desktop.py        # ícone gerado e entrada de menu
     └── test_portability.py    # regressões de Linux/macOS
 ```
 
@@ -462,6 +492,7 @@ O `conftest.py` já define os drivers `dummy` de vídeo e áudio, então a suít
 - `test_sound.py` valida a síntese das ondas e garante que a ausência de dispositivo de áudio vira silêncio, não exceção. Usa um dublê do mixer.
 - `test_scale.py` cobre a escala da janela e garante que um clique visual sobre um botão vira a coordenada lógica certa em qualquer escala.
 - `test_storage.py` cobre o caminho do arquivo em cada sistema, a regra de retomada, a escrita atômica e o comportamento diante de arquivo corrompido. Uma fixture no `conftest.py` aponta o estado para um diretório temporário, então a suíte nunca lê nem sobrescreve o estado real.
+- `test_desktop.py` cobre a geração do ícone e o template do `.desktop` — inclusive que todo marcador do template é substituído pelo instalador.
 - `test_notify.py` cobre a escolha de backend e o formato do comando, com dublês — nenhum teste dispara notificação de verdade (ver a fixture no `conftest.py`).
 - `test_portability.py` cobre as regressões de Linux/macOS: clique sem a API do Windows, cor de fundo, rótulos que cabem nos botões e disparo dos bipes.
 
@@ -481,3 +512,4 @@ O `conftest.py` já define os drivers `dummy` de vídeo e áudio, então a suít
 - Ciclos longos de descanso (a cada 4 focos, uma pausa maior).
 - Personalização do bichinho (nome, cores, acessórios).
 - Empacotamento como executável (PyInstaller).
+- Lançador equivalente no Windows (atalho no menu Iniciar) e no macOS (bundle `.app`).

@@ -1,0 +1,22 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Pomodoro Pet
+GenericName=Timer Pomodoro
+Comment=Timer Pomodoro com um monstrengo que cansa enquanto você trabalha
+Comment[en]=Pomodoro timer with a little monster that gets tired as you work
+Exec=@PYTHON@ @APPDIR@/pomodoro.py @ARGS@
+Path=@APPDIR@
+Icon=pomodoro-pet
+Terminal=false
+Categories=Utility;Clock;
+Keywords=pomodoro;timer;foco;produtividade;focus;
+StartupNotify=false
+StartupWMClass=pomodoro-pet
+SingleMainWindow=true
+Actions=Stats;
+
+[Desktop Action Stats]
+Name=Ver focos por dia
+Name[en]=Show focus history
+Exec=@TERMINAL@ @PYTHON@ @APPDIR@/pomodoro.py --stats

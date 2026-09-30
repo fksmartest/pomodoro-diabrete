@@ -26,6 +26,13 @@ import sys
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
+# Identidade da janela para o gerenciador de janelas. Sem isso o SDL usa o
+# nome do processo ("python") e a barra de tarefas nao consegue ligar a
+# janela ao lancador .desktop — aparece com icone generico e nao agrupa.
+WM_CLASS = "pomodoro-pet"
+os.environ.setdefault("SDL_VIDEO_X11_WMCLASS", WM_CLASS)
+os.environ.setdefault("SDL_VIDEO_WAYLAND_WMCLASS", WM_CLASS)
+
 import pygame
 
 from pet import (
