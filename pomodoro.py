@@ -47,6 +47,13 @@ MONO = ("consolas,dejavu sans mono,liberation mono,jetbrains mono,"
 BUTTON_SIZES = (13, 12, 11, 10, 9)   # do maior para o menor; ver _button_font
 BUTTON_PADDING = 8                   # folga minima entre texto e borda
 
+# A janela tem 240x168 pixels logicos. Numa tela densa isso vira uma
+# miniatura, entao tudo e desenhado no tamanho logico e ampliado por
+# UI_SCALE com nearest-neighbor — o que combina com a pixel art.
+MAX_UI_SCALE = 6
+# (altura minima da tela em px, escala) — do maior para o menor
+SCALE_BY_SCREEN_HEIGHT = ((2000, 3), (1400, 2), (0, 1))
+
 MAGIC = (255, 0, 255)     # cor-chave: vira 100% transparente (Windows)
 REVEAL_SPEED = 6.0        # velocidade da transicao compacto <-> expandido
 ALPHA_IDLE = 120          # opacidade no repouso (0-255)
@@ -98,6 +105,14 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
+def auto_ui_scale(screen_height):
+    """Escala sugerida para a altura de tela informada (ver --scale)."""
+    for min_height, scale in SCALE_BY_SCREEN_HEIGHT:
+        if screen_height >= min_height:
+            return scale
+    return 1
+
+
 def lerp(a, b, t):
     return a + (b - a) * t
 
@@ -124,9 +139,10 @@ class _WindowDrag:
 
     HWND_TOPMOST = -1
 
-    def __init__(self):
+    def __init__(self, size=(WIDTH, HEIGHT)):
         self.ok = False
         self.transparent = False
+        self.size = size          # tamanho real da janela (ja com a escala)
         self._colorkey = 0
         self._last_alpha = None
         if sys.platform != "win32":
@@ -183,7 +199,8 @@ class _WindowDrag:
     def move_to(self, x, y):
         if not self.ok:
             return
-        self._user32.MoveWindow(self.hwnd, x, y, WIDTH, HEIGHT, True)
+        self._user32.MoveWindow(self.hwnd, x, y, self.size[0], self.size[1],
+                                True)
 
     def top_left(self):
         """Canto superior esquerdo da janela; (0, 0) sem a API nativa."""
@@ -225,10 +242,20 @@ class _WindowDrag:
 
 class PetWindow:
     def __init__(self, focus_duration=25 * 60, break_duration=5 * 60,
-                 opaque=False, mute=False):
+                 opaque=False, mute=False, scale=None):
         pygame.init()
         pygame.display.set_caption("Pomodoro Pet")
-        self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.NOFRAME)
+
+        if scale is None:
+            scale = auto_ui_scale(pygame.display.Info().current_h)
+        self.scale = int(clamp(int(scale), 1, MAX_UI_SCALE))
+
+        self.window = pygame.display.set_mode(
+            (WIDTH * self.scale, HEIGHT * self.scale), pygame.NOFRAME)
+        # Em escala 1 desenha direto na janela; acima disso, numa superficie
+        # logica que e ampliada no fim de cada quadro.
+        self.screen = (self.window if self.scale == 1
+                       else pygame.Surface((WIDTH, HEIGHT)))
         self.clock = pygame.time.Clock()
 
         self.pet = PomodoroPet(focus_duration=focus_duration,
@@ -245,7 +272,7 @@ class PetWindow:
         self.font_small = pygame.font.SysFont(MONO, 12)
         self.font_tiny = pygame.font.SysFont(MONO, 11)
 
-        self.drag = _WindowDrag()
+        self.drag = _WindowDrag(size=self.window.get_size())
         self.drag.set_topmost()
         if not opaque:
             self.drag.enable_transparency()
@@ -270,6 +297,13 @@ class PetWindow:
     @property
     def expanded(self):
         return self.reveal > REVEAL_THRESHOLD
+
+    def _to_logical(self, pos):
+        """Converte coordenada da janela para a grade logica de 240x168."""
+        return (pos[0] // self.scale, pos[1] // self.scale)
+
+    def _mouse_pos(self):
+        return self._to_logical(pygame.mouse.get_pos())
 
     def _pet_center(self):
         return EXPANDED_PET if self.expanded else COMPACT_PET
@@ -315,15 +349,16 @@ class PetWindow:
         self.drag_moved = False
         if was_drag:
             return
+        pos = self._to_logical(event.pos)
         if self.expanded:
-            if BTN_SKIP.collidepoint(event.pos):
+            if BTN_SKIP.collidepoint(pos):
                 self._skip()
-            elif BTN_RESET.collidepoint(event.pos):
+            elif BTN_RESET.collidepoint(pos):
                 self.pet.reset()
-            elif BTN_EXIT.collidepoint(event.pos):
+            elif BTN_EXIT.collidepoint(pos):
                 self.running = False
-            elif (BTN_MAIN.collidepoint(event.pos)
-                  or self._pet_rect().collidepoint(event.pos)):
+            elif (BTN_MAIN.collidepoint(pos)
+                  or self._pet_rect().collidepoint(pos)):
                 self._primary_action()
         else:
             self._primary_action()
@@ -386,7 +421,7 @@ class PetWindow:
             self.reveal = max(target, self.reveal - step)
 
         cx, cy = self._pet_center()
-        mx, my = pygame.mouse.get_pos()
+        mx, my = self._mouse_pos()
         self.look = (clamp((mx - cx) / (WIDTH / 2), -1.0, 1.0),
                      clamp((my - cy) / (HEIGHT / 2), -1.0, 1.0))
 
@@ -416,6 +451,10 @@ class PetWindow:
             self._draw_expanded(t)
         else:
             self._draw_compact(t)
+        if self.screen is not self.window:
+            # nearest-neighbor de proposito: mantem a pixel art nitida
+            pygame.transform.scale(self.screen, self.window.get_size(),
+                                   self.window)
         self.drag.set_alpha(lerp(ALPHA_IDLE, ALPHA_ACTIVE, self.reveal))
 
     def _accent(self):
@@ -468,7 +507,7 @@ class PetWindow:
         return self.font_buttons[-1]
 
     def _button(self, rect, label, primary=False):
-        hovered = rect.collidepoint(pygame.mouse.get_pos())
+        hovered = rect.collidepoint(self._mouse_pos())
         active = primary and (self.pet.awaiting or not self.pet.running)
         base = self._accent() if active else shade(PANEL, 1.35)
         color = mix(base, (255, 255, 255), 0.25 if hovered else 0.0)
@@ -746,37 +785,65 @@ class PetWindow:
             self.screen.blit(extra, (ENERGY_BAR.x + 52 + 6 * 14, CYCLES_Y - 6))
 
 
-USAGE = """Pomodoro Pet — timer Pomodoro com um monstrengo que cansa e descansa.
+USAGE = f"""Pomodoro Pet — timer Pomodoro com um monstrengo que cansa e descansa.
 
-    python pomodoro.py [--demo] [--opaque] [--mute] [--help]
+    python pomodoro.py [--demo] [--opaque] [--mute] [--scale N] [--help]
 
     --demo     ciclos curtos (6s de foco / 4s de pausa) para ver o fluxo
     --opaque   forca a janela opaca (ignora a transparencia do Windows)
     --mute     sem bipes no fim de fase
+    --scale N  ampliacao da janela, 1 a {MAX_UI_SCALE}. Sem a flag, e escolhida
+               pela altura da tela ({WIDTH}x{HEIGHT} por unidade de escala).
 """
+
+FLAGS = ("--demo", "--opaque", "--mute")
+
+
+def parse_args(argv):
+    """Devolve (opcoes, codigo_de_saida). O codigo e None quando esta tudo ok."""
+    if "--help" in argv or "-h" in argv:
+        print(USAGE)
+        return None, 0
+
+    scale = None
+    rest = list(argv)
+    if "--scale" in rest:
+        i = rest.index("--scale")
+        value = rest[i + 1] if i + 1 < len(rest) else None
+        if value is None or not value.isdigit() or not 1 <= int(value) <= MAX_UI_SCALE:
+            print(f"--scale precisa de um numero de 1 a {MAX_UI_SCALE}\n")
+            print(USAGE)
+            return None, 2
+        scale = int(value)
+        del rest[i:i + 2]
+
+    unknown = [a for a in rest if a not in FLAGS]
+    if unknown:
+        print(f"argumento desconhecido: {' '.join(unknown)}\n")
+        print(USAGE)
+        return None, 2
+
+    return {
+        "demo": "--demo" in rest,
+        "opaque": "--opaque" in rest,
+        "mute": "--mute" in rest,
+        "scale": scale,
+    }, None
 
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    if "--help" in argv or "-h" in argv:
-        print(USAGE)
-        return 0
-    unknown = [a for a in argv
-               if a not in ("--demo", "--opaque", "--mute")]
-    if unknown:
-        print(f"argumento desconhecido: {' '.join(unknown)}\n")
-        print(USAGE)
-        return 2
+    options, code = parse_args(argv)
+    if code is not None:
+        return code
 
-    demo = "--demo" in argv
-    opaque = "--opaque" in argv
-    mute = "--mute" in argv
-    if demo:
-        window = PetWindow(focus_duration=6, break_duration=4,
-                           opaque=opaque, mute=mute)
+    kwargs = {"opaque": options["opaque"], "mute": options["mute"],
+              "scale": options["scale"]}
+    if options["demo"]:
+        window = PetWindow(focus_duration=6, break_duration=4, **kwargs)
         window.pet.start()
     else:
-        window = PetWindow(opaque=opaque, mute=mute)
+        window = PetWindow(**kwargs)
     window.run()
     return 0
 

@@ -26,6 +26,16 @@ A transição é suave (`REVEAL_SPEED`) e disparada por `pygame.mouse.get_focuse
 
 > Transparência é **Windows-only**. Em outros sistemas a janela abre opaca automaticamente — não é preciso passar `--opaque`, que serve para forçar o modo opaco também no Windows.
 
+### Tamanho da janela
+
+O layout tem `240×168` pixels lógicos. Numa tela densa isso vira uma miniatura, então tudo é desenhado no tamanho lógico e ampliado por `--scale` com nearest-neighbor — a mesma técnica do sprite, o que mantém a pixel art nítida em vez de borrada.
+
+```bash
+python pomodoro.py --scale 3      # janela de 720x504
+```
+
+Sem a flag, a escala vem da altura da tela: `1` abaixo de 1400px, `2` até 2000px, `3` acima (`SCALE_BY_SCREEN_HEIGHT`). As coordenadas do mouse são convertidas de volta para a grade lógica, então os botões continuam acertando o alvo em qualquer escala.
+
 ### Fora do Windows
 
 O app roda em Linux e macOS, com três recursos da janela que dependem da API nativa do Windows e ficam desligados:
@@ -34,9 +44,11 @@ O app roda em Linux e macOS, com três recursos da janela que dependem da API na
 |---|---|---|
 | Fundo transparente | sim | janela opaca |
 | Sempre no topo | automático | regra do gerenciador de janelas |
-| Arrastar clicando no corpo | sim | atalho do sistema |
+| Arrastar clicando no corpo | sim | atalho do sistema (ver nota sobre Wayland) |
 
 No KDE Plasma, os dois últimos saem de graça: **Meta + arrastar** move a janela e **Meta + PgUp** (ou uma regra do KWin em *Configurações da janela → Manter acima das outras*) fixa ela no topo. No GNOME, `super + arrastar` e a extensão de *always on top*. No macOS, arrastar funciona pela própria janela sem moldura.
+
+> **Wayland:** o protocolo não permite que um aplicativo defina a própria posição — é uma decisão do compositor, não uma limitação do pygame (a `Window.position` do pygame-ce levanta `pygame.error` nesses drivers). Por isso arrastar pelo corpo do bichinho não funciona em Wayland nativo, e nenhuma implementação resolveria. Use `Meta + arrastar`, ou force XWayland com `SDL_VIDEODRIVER=x11 python pomodoro.py`.
 
 ---
 
@@ -51,6 +63,7 @@ No KDE Plasma, os dois últimos saem de graça: **Meta + arrastar** move a janel
   - [Humor e expressões](#humor-e-expressões)
   - [Animações](#animações)
   - [Som](#som)
+- [Tamanho da janela](#tamanho-da-janela)
 - [Arquitetura](#arquitetura)
   - [Módulos](#módulos)
   - [API de `pet.py`](#api-de-petpy)
@@ -340,6 +353,8 @@ Todos em `pet.py` (mecânica) e `pomodoro.py` (visual):
 | `MAGIC` | `pomodoro.py` | `(255,0,255)` | cor-chave que vira transparente |
 | `JOY_TIME` / `ALERT_TIME` | `pomodoro.py` | `1.8` / `1.6` | duração das animações (s) |
 | `ENERGY_STOPS` | `pomodoro.py` | 4 cores | paleta da barra e do corpo |
+| `--scale N` | linha de comando | automático | ampliação da janela (1 a `MAX_UI_SCALE`) |
+| `SCALE_BY_SCREEN_HEIGHT` | `pomodoro.py` | 3 faixas | escala escolhida pela altura da tela |
 | `MONO` | `pomodoro.py` | lista | fontes monoespaçadas, da preferida ao fallback genérico |
 | `BUTTON_SIZES` | `pomodoro.py` | `13..9` | corpos testados até o rótulo caber no botão |
 | `AMPLITUDE` | `sound.py` | `0.28` | volume dos bipes (0–1) |
@@ -361,6 +376,7 @@ pomodoro-diabrete/
     ├── test_pet.py            # testes de lógica
     ├── test_pomodoro.py       # testes de render headless
     ├── test_sound.py          # síntese e degradação sem áudio
+    ├── test_scale.py          # escala da janela e mapeamento do mouse
     └── test_portability.py    # regressões de Linux/macOS
 ```
 
@@ -376,6 +392,7 @@ pytest tests/ -v
 - `test_pet.py` cobre formatação de tempo, controles, máquina de estados (`awaiting`, `advance`), modelo de energia, humor e progresso. Não abre janela.
 - `test_pomodoro.py` roda com o driver de vídeo `dummy` (`SDL_VIDEODRIVER=dummy`) para validar a renderização de cada humor, o rótulo do botão e a animação de alegria sem abrir janela.
 - `test_sound.py` valida a síntese das ondas e garante que a ausência de dispositivo de áudio vira silêncio, não exceção. Usa um dublê do mixer.
+- `test_scale.py` cobre a escala da janela e garante que um clique visual sobre um botão vira a coordenada lógica certa em qualquer escala.
 - `test_portability.py` cobre as regressões de Linux/macOS: clique sem a API do Windows, cor de fundo, rótulos que cabem nos botões e disparo dos bipes.
 
 ---
