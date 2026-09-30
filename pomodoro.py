@@ -34,6 +34,10 @@ from pet import (
 )
 from sound import Chime
 from notify import Notifier
+import storage
+from storage import StateStore
+
+SAVE_INTERVAL = 30.0     # segundos entre gravacoes automaticas
 
 # Texto da notificacao de fim de fase, por fase que terminou
 PHASE_NOTICE = {
@@ -249,7 +253,8 @@ class _WindowDrag:
 
 class PetWindow:
     def __init__(self, focus_duration=25 * 60, break_duration=5 * 60,
-                 opaque=False, mute=False, scale=None, notify=True):
+                 opaque=False, mute=False, scale=None, notify=True,
+                 store=None):
         pygame.init()
         pygame.display.set_caption("Pomodoro Pet")
 
@@ -267,6 +272,12 @@ class PetWindow:
 
         self.pet = PomodoroPet(focus_duration=focus_duration,
                                break_duration=break_duration)
+
+        self.store = store if store is not None else StateStore()
+        saved = self.store.load()
+        self.history = dict(saved.get("history") or {})
+        self.resumed = storage.restore(self.pet, saved)
+        self._since_save = 0.0
 
         self.font_compact = pygame.font.SysFont(MONO, 34, bold=True)
         self.font_timer = pygame.font.SysFont(MONO, 26, bold=True)
@@ -409,6 +420,15 @@ class PetWindow:
         self.chime.alert()
         title, body = PHASE_NOTICE[self.pet.phase]
         self.notifier.notify(title, body)
+        if self.pet.phase == FOCUS:
+            day = storage.today()
+            self.history[day] = self.history.get(day, 0) + 1
+        self.save()
+
+    def save(self):
+        """Grava o estado atual. Silenciosa por design: disco nao para o app."""
+        self._since_save = 0.0
+        return self.store.save(storage.snapshot(self.pet, self.history))
 
     # --- loop ---
     def run(self):
@@ -418,6 +438,7 @@ class PetWindow:
             self._update(dt)
             self._draw()
             pygame.display.flip()
+        self.save()          # ultimo estado antes de fechar
         pygame.quit()
 
     def _update(self, dt):
@@ -426,6 +447,12 @@ class PetWindow:
                 self._phase_done()
         self.joy = max(0.0, self.joy - dt)
         self.alert = max(0.0, self.alert - dt)
+
+        # Gravacao periodica: se a maquina desligar, perde-se no maximo
+        # SAVE_INTERVAL segundos de progresso.
+        self._since_save += dt
+        if self._since_save >= SAVE_INTERVAL:
+            self.save()
 
         target = 1.0 if pygame.mouse.get_focused() else 0.0
         step = REVEAL_SPEED * dt
@@ -802,23 +829,33 @@ class PetWindow:
 USAGE = f"""Pomodoro Pet — timer Pomodoro com um monstrengo que cansa e descansa.
 
     python pomodoro.py [--demo] [--opaque] [--mute] [--no-notify]
-                       [--scale N] [--help]
+                       [--no-save] [--stats] [--scale N] [--help]
 
     --demo       ciclos curtos (6s de foco / 4s de pausa) para ver o fluxo
     --opaque     forca a janela opaca (ignora a transparencia do Windows)
     --mute       sem bipes no fim de fase
     --no-notify  sem notificacao do sistema no fim de fase
+    --no-save    nao le nem grava o estado entre sessoes
+    --stats      mostra os focos concluidos por dia e sai
     --scale N    ampliacao da janela, 1 a {MAX_UI_SCALE}. Sem a flag, e
                  escolhida pela altura da tela ({WIDTH}x{HEIGHT} por unidade).
+
+O estado fica em {{state_path}} e e retomado se voce reabrir
+o app em ate 2h, no mesmo dia; fora disso, o bichinho comeca descansado.
 """
 
-FLAGS = ("--demo", "--opaque", "--mute", "--no-notify")
+FLAGS = ("--demo", "--opaque", "--mute", "--no-notify", "--no-save",
+         "--stats")
+
+
+def usage():
+    return USAGE.replace("{state_path}", storage.state_path())
 
 
 def parse_args(argv):
     """Devolve (opcoes, codigo_de_saida). O codigo e None quando esta tudo ok."""
     if "--help" in argv or "-h" in argv:
-        print(USAGE)
+        print(usage())
         return None, 0
 
     scale = None
@@ -828,7 +865,7 @@ def parse_args(argv):
         value = rest[i + 1] if i + 1 < len(rest) else None
         if value is None or not value.isdigit() or not 1 <= int(value) <= MAX_UI_SCALE:
             print(f"--scale precisa de um numero de 1 a {MAX_UI_SCALE}\n")
-            print(USAGE)
+            print(usage())
             return None, 2
         scale = int(value)
         del rest[i:i + 2]
@@ -836,7 +873,7 @@ def parse_args(argv):
     unknown = [a for a in rest if a not in FLAGS]
     if unknown:
         print(f"argumento desconhecido: {' '.join(unknown)}\n")
-        print(USAGE)
+        print(usage())
         return None, 2
 
     return {
@@ -844,6 +881,8 @@ def parse_args(argv):
         "opaque": "--opaque" in rest,
         "mute": "--mute" in rest,
         "notify": "--no-notify" not in rest,
+        "save": "--no-save" not in rest,
+        "stats": "--stats" in rest,
         "scale": scale,
     }, None
 
@@ -854,8 +893,15 @@ def main(argv=None):
     if code is not None:
         return code
 
+    # O demo tem ciclos de segundos: nao deve ler nem sujar o estado real.
+    store = StateStore(enabled=options["save"] and not options["demo"])
+    if options["stats"]:
+        print(storage.format_stats(store.load().get("history") or {}))
+        return 0
+
     kwargs = {"opaque": options["opaque"], "mute": options["mute"],
-              "scale": options["scale"], "notify": options["notify"]}
+              "scale": options["scale"], "notify": options["notify"],
+              "store": store}
     if options["demo"]:
         window = PetWindow(focus_duration=6, break_duration=4, **kwargs)
         window.pet.start()

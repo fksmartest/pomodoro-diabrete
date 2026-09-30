@@ -65,6 +65,7 @@ No KDE Plasma, os dois últimos saem de graça: **Meta + arrastar** move a janel
   - [Som](#som)
   - [Notificação do sistema](#notificação-do-sistema)
 - [Tamanho da janela](#tamanho-da-janela)
+- [Persistência entre sessões](#persistência-entre-sessões)
 - [Arquitetura](#arquitetura)
   - [Módulos](#módulos)
   - [API de `pet.py`](#api-de-petpy)
@@ -220,6 +221,46 @@ O processo externo é disparado numa thread daemon, para não segurar o loop de 
 
 ---
 
+## Persistência entre sessões
+
+O acúmulo de cansaço é a ideia central do bichinho — e não sobrevivia a fechar o app. Agora o estado vai para disco, no diretório que cada sistema usa para isso:
+
+| Sistema | Arquivo |
+|---|---|
+| Linux | `$XDG_STATE_HOME/pomodoro-pet/state.json` (ou `~/.local/state/...`) |
+| macOS | `~/Library/Application Support/pomodoro-pet/state.json` |
+| Windows | `%APPDATA%\pomodoro-pet\state.json` |
+
+A regra de retomada, em uma frase: **reabrir logo depois continua de onde parou; reabrir no dia seguinte começa descansado.**
+
+- Reabriu em até `RESUME_WINDOW` (2h) **e no mesmo dia** → energia, ciclos, fase e tempo restante voltam como estavam.
+- Fora disso → sessão nova com a energia inicial.
+
+Em qualquer caso o bichinho volta **pausado**, porque o tempo correu com o app fechado e não faria sentido contá-lo. O tempo restante também é limitado à duração da fase atual, senão um estado gravado em ciclos de 25 min travaria uma sessão `--demo` de 6 s.
+
+A gravação acontece no fim de cada fase e a cada `SAVE_INTERVAL` (30 s), de forma atômica — escreve ao lado e troca o arquivo — então um desligamento no meio não deixa um `state.json` pela metade. Arquivo corrompido, versão desconhecida ou disco cheio fazem o app começar limpo em vez de quebrar.
+
+### Histórico e `--stats`
+
+Além do estado da sessão, o arquivo guarda quantos focos você concluiu em cada dia (`HISTORY_DAYS`, 60 dias). É o dado que sobrevive a tudo:
+
+```
+$ python pomodoro.py --stats
+Focos concluidos (ultimos 5 dias com registro):
+
+  2026-09-24  5  #####
+  2026-09-25  8  ########
+  2026-09-26  3  ###
+  2026-09-29  7  #######
+  2026-09-30  4  ####
+
+  total 27 | media 5.4 por dia
+```
+
+`--no-save` desliga leitura e gravação. O modo `--demo` nunca toca no arquivo real.
+
+---
+
 ## Arquitetura
 
 O projeto separa **regra de negócio** de **apresentação**. `pet.py` não importa Pygame, o que permite testar toda a mecânica sem abrir janela.
@@ -345,6 +386,7 @@ Requisitos: Python 3.x e Pygame. `pytest` só é necessário para rodar os teste
 | Novo ciclo (reset) | Botão `reset`, clique direito ou `R` |
 | Sair | Botão `sair` ou `Esc` |
 | Mover a janela | Arrastar (fora dos botões); no Linux, `Meta` + arrastar |
+| Ver o histórico | `python pomodoro.py --stats` |
 
 O botão principal muda de rótulo conforme o contexto: `iniciar foco`, `pausar`, `retomar` e `comecar pausa`. Os olhos do monstrengo acompanham o mouse.
 
@@ -375,6 +417,9 @@ Todos em `pet.py` (mecânica) e `pomodoro.py` (visual):
 | `AMPLITUDE` | `sound.py` | `0.28` | volume dos bipes (0–1) |
 | `PHASE_NOTICE` | `pomodoro.py` | — | texto da notificação por fase |
 | `ICON` / `TIMEOUT` | `notify.py` | — | ícone do tema e limite do processo externo |
+| `RESUME_WINDOW` | `storage.py` | `2h` | prazo para retomar a sessão anterior |
+| `HISTORY_DAYS` | `storage.py` | `60` | dias mantidos no histórico |
+| `SAVE_INTERVAL` | `pomodoro.py` | `30` | segundos entre gravações automáticas |
 | `ALERT_NOTES` / `JOY_NOTES` | `sound.py` | — | notas `(Hz, segundos)` de cada som |
 
 ---
@@ -387,6 +432,7 @@ pomodoro-diabrete/
 ├── pomodoro.py                # app Pygame (render + loop)
 ├── sound.py                   # bipes sintetizados (sem assets)
 ├── notify.py                  # notificação do sistema (sem dependência)
+├── storage.py                 # estado em disco e regra de retomada
 ├── requirements.txt
 ├── README.md
 └── tests/
@@ -396,6 +442,7 @@ pomodoro-diabrete/
     ├── test_sound.py          # síntese e degradação sem áudio
     ├── test_scale.py          # escala da janela e mapeamento do mouse
     ├── test_notify.py         # backends de notificação, com dublês
+    ├── test_storage.py        # persistência, retomada e histórico
     └── test_portability.py    # regressões de Linux/macOS
 ```
 
@@ -414,6 +461,7 @@ O `conftest.py` já define os drivers `dummy` de vídeo e áudio, então a suít
 - `test_pomodoro.py` roda com o driver de vídeo `dummy` (`SDL_VIDEODRIVER=dummy`) para validar a renderização de cada humor, o rótulo do botão e a animação de alegria sem abrir janela.
 - `test_sound.py` valida a síntese das ondas e garante que a ausência de dispositivo de áudio vira silêncio, não exceção. Usa um dublê do mixer.
 - `test_scale.py` cobre a escala da janela e garante que um clique visual sobre um botão vira a coordenada lógica certa em qualquer escala.
+- `test_storage.py` cobre o caminho do arquivo em cada sistema, a regra de retomada, a escrita atômica e o comportamento diante de arquivo corrompido. Uma fixture no `conftest.py` aponta o estado para um diretório temporário, então a suíte nunca lê nem sobrescreve o estado real.
 - `test_notify.py` cobre a escolha de backend e o formato do comando, com dublês — nenhum teste dispara notificação de verdade (ver a fixture no `conftest.py`).
 - `test_portability.py` cobre as regressões de Linux/macOS: clique sem a API do Windows, cor de fundo, rótulos que cabem nos botões e disparo dos bipes.
 
@@ -431,6 +479,5 @@ O `conftest.py` já define os drivers `dummy` de vídeo e áudio, então a suít
 ## Possíveis extensões
 
 - Ciclos longos de descanso (a cada 4 focos, uma pausa maior).
-- Persistência de energia/ciclos entre sessões.
 - Personalização do bichinho (nome, cores, acessórios).
 - Empacotamento como executável (PyInstaller).

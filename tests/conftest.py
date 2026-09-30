@@ -12,6 +12,19 @@ os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 import pytest
 
 import notify
+import storage
+
+
+@pytest.fixture(autouse=True)
+def isolated_state(tmp_path, monkeypatch):
+    """Cada teste comeca com o estado em disco vazio, num diretorio proprio.
+
+    Sem isso a suite leria e sobrescreveria o estado real do usuario, e os
+    testes passariam a depender de quanto o bichinho tinha de energia.
+    """
+    path = tmp_path / "state.json"
+    monkeypatch.setattr(storage, "state_path", lambda: str(path))
+    return path
 
 
 @pytest.fixture(autouse=True)
