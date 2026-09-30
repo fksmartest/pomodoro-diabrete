@@ -33,6 +33,13 @@ from pet import (
     FOCUS_DONE, BREAK_DONE, BREAK_STARTED,
 )
 from sound import Chime
+from notify import Notifier
+
+# Texto da notificacao de fim de fase, por fase que terminou
+PHASE_NOTICE = {
+    FOCUS: ("Foco concluido", "Hora da pausa — marque no app quando parar."),
+    BREAK: ("Pausa concluida", "Pronto para voltar ao foco."),
+}
 
 WIDTH, HEIGHT = 240, 168
 FPS = 60
@@ -242,7 +249,7 @@ class _WindowDrag:
 
 class PetWindow:
     def __init__(self, focus_duration=25 * 60, break_duration=5 * 60,
-                 opaque=False, mute=False, scale=None):
+                 opaque=False, mute=False, scale=None, notify=True):
         pygame.init()
         pygame.display.set_caption("Pomodoro Pet")
 
@@ -282,6 +289,7 @@ class PetWindow:
         self.base = MAGIC if self.drag.transparent else BG
 
         self.chime = Chime(enabled=not mute)
+        self.notifier = Notifier(enabled=notify)
 
         self.pressed = False
         self.drag_cursor = (0, 0)
@@ -392,9 +400,15 @@ class PetWindow:
             self._phase_done()
 
     def _phase_done(self):
-        """Fim de fase: pulso visual + bipe, ja que a troca e manual."""
+        """Fim de fase: pulso visual, bipe e notificacao.
+
+        A troca e manual, entao o aviso precisa chegar mesmo com a janela
+        atras de tudo — dai os tres canais.
+        """
         self.alert = ALERT_TIME
         self.chime.alert()
+        title, body = PHASE_NOTICE[self.pet.phase]
+        self.notifier.notify(title, body)
 
     # --- loop ---
     def run(self):
@@ -787,16 +801,18 @@ class PetWindow:
 
 USAGE = f"""Pomodoro Pet — timer Pomodoro com um monstrengo que cansa e descansa.
 
-    python pomodoro.py [--demo] [--opaque] [--mute] [--scale N] [--help]
+    python pomodoro.py [--demo] [--opaque] [--mute] [--no-notify]
+                       [--scale N] [--help]
 
-    --demo     ciclos curtos (6s de foco / 4s de pausa) para ver o fluxo
-    --opaque   forca a janela opaca (ignora a transparencia do Windows)
-    --mute     sem bipes no fim de fase
-    --scale N  ampliacao da janela, 1 a {MAX_UI_SCALE}. Sem a flag, e escolhida
-               pela altura da tela ({WIDTH}x{HEIGHT} por unidade de escala).
+    --demo       ciclos curtos (6s de foco / 4s de pausa) para ver o fluxo
+    --opaque     forca a janela opaca (ignora a transparencia do Windows)
+    --mute       sem bipes no fim de fase
+    --no-notify  sem notificacao do sistema no fim de fase
+    --scale N    ampliacao da janela, 1 a {MAX_UI_SCALE}. Sem a flag, e
+                 escolhida pela altura da tela ({WIDTH}x{HEIGHT} por unidade).
 """
 
-FLAGS = ("--demo", "--opaque", "--mute")
+FLAGS = ("--demo", "--opaque", "--mute", "--no-notify")
 
 
 def parse_args(argv):
@@ -827,6 +843,7 @@ def parse_args(argv):
         "demo": "--demo" in rest,
         "opaque": "--opaque" in rest,
         "mute": "--mute" in rest,
+        "notify": "--no-notify" not in rest,
         "scale": scale,
     }, None
 
@@ -838,7 +855,7 @@ def main(argv=None):
         return code
 
     kwargs = {"opaque": options["opaque"], "mute": options["mute"],
-              "scale": options["scale"]}
+              "scale": options["scale"], "notify": options["notify"]}
     if options["demo"]:
         window = PetWindow(focus_duration=6, break_duration=4, **kwargs)
         window.pet.start()

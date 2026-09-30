@@ -63,6 +63,7 @@ No KDE Plasma, os dois últimos saem de graça: **Meta + arrastar** move a janel
   - [Humor e expressões](#humor-e-expressões)
   - [Animações](#animações)
   - [Som](#som)
+  - [Notificação do sistema](#notificação-do-sistema)
 - [Tamanho da janela](#tamanho-da-janela)
 - [Arquitetura](#arquitetura)
   - [Módulos](#módulos)
@@ -202,6 +203,20 @@ Como a troca de fase é manual, o fim do tempo precisa de um aviso que funcione 
 Os sons são sintetizados em `sound.py` com a stdlib (`array` + `math`) e entregues ao mixer como buffer cru, então o projeto continua **sem assets externos e com uma única dependência**. Duas notas subindo no fim de fase, um arpejo de quatro notas na comemoração, ambos com rampa de entrada e saída para não estalar.
 
 Se o mixer não abrir — máquina sem placa de som, container, servidor de áudio ausente — o `Chime` fica mudo em vez de derrubar o app. Para silenciar por opção, use `--mute`.
+
+### Notificação do sistema
+
+O bipe avisa que *algo* aconteceu; a notificação diz **o quê**, aparece por cima de qualquer janela e fica guardada na central de notificações se você não vir na hora. Junto com o `"!"` na tela, são três canais para o mesmo evento — redundância proposital, porque a fase não avança sozinha e um aviso perdido trava o ciclo.
+
+`notify.py` escolhe o backend na inicialização e também não traz dependência nova:
+
+| Sistema | Backend |
+|---|---|
+| Linux | `notify-send` (libnotify) |
+| macOS | `osascript` |
+| Windows | nenhum — lá a janela já fica no topo e semitransparente |
+
+O processo externo é disparado numa thread daemon, para não segurar o loop de 60 FPS se o barramento estiver lento, e a notificação nova substitui a anterior em vez de empilhar. Sem backend disponível, o `Notifier` fica em silêncio. `--no-notify` desliga por opção.
 
 ---
 
@@ -358,6 +373,8 @@ Todos em `pet.py` (mecânica) e `pomodoro.py` (visual):
 | `MONO` | `pomodoro.py` | lista | fontes monoespaçadas, da preferida ao fallback genérico |
 | `BUTTON_SIZES` | `pomodoro.py` | `13..9` | corpos testados até o rótulo caber no botão |
 | `AMPLITUDE` | `sound.py` | `0.28` | volume dos bipes (0–1) |
+| `PHASE_NOTICE` | `pomodoro.py` | — | texto da notificação por fase |
+| `ICON` / `TIMEOUT` | `notify.py` | — | ícone do tema e limite do processo externo |
 | `ALERT_NOTES` / `JOY_NOTES` | `sound.py` | — | notas `(Hz, segundos)` de cada som |
 
 ---
@@ -369,6 +386,7 @@ pomodoro-diabrete/
 ├── pet.py                     # lógica pura (sem Pygame)
 ├── pomodoro.py                # app Pygame (render + loop)
 ├── sound.py                   # bipes sintetizados (sem assets)
+├── notify.py                  # notificação do sistema (sem dependência)
 ├── requirements.txt
 ├── README.md
 └── tests/
@@ -377,6 +395,7 @@ pomodoro-diabrete/
     ├── test_pomodoro.py       # testes de render headless
     ├── test_sound.py          # síntese e degradação sem áudio
     ├── test_scale.py          # escala da janela e mapeamento do mouse
+    ├── test_notify.py         # backends de notificação, com dublês
     └── test_portability.py    # regressões de Linux/macOS
 ```
 
@@ -389,10 +408,13 @@ pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
+O `conftest.py` já define os drivers `dummy` de vídeo e áudio, então a suíte roda sem abrir janela, sem emitir som e sem notificar — inclusive por ssh.
+
 - `test_pet.py` cobre formatação de tempo, controles, máquina de estados (`awaiting`, `advance`), modelo de energia, humor e progresso. Não abre janela.
 - `test_pomodoro.py` roda com o driver de vídeo `dummy` (`SDL_VIDEODRIVER=dummy`) para validar a renderização de cada humor, o rótulo do botão e a animação de alegria sem abrir janela.
 - `test_sound.py` valida a síntese das ondas e garante que a ausência de dispositivo de áudio vira silêncio, não exceção. Usa um dublê do mixer.
 - `test_scale.py` cobre a escala da janela e garante que um clique visual sobre um botão vira a coordenada lógica certa em qualquer escala.
+- `test_notify.py` cobre a escolha de backend e o formato do comando, com dublês — nenhum teste dispara notificação de verdade (ver a fixture no `conftest.py`).
 - `test_portability.py` cobre as regressões de Linux/macOS: clique sem a API do Windows, cor de fundo, rótulos que cabem nos botões e disparo dos bipes.
 
 ---
