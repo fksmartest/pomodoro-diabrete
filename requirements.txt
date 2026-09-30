@@ -1,1 +1,4 @@
+# Em Python 3.14+ o pygame oficial ainda nao publica wheels; use o
+# pygame-ce no lugar (mesma API, `import pygame` igual):
+#     pip install pygame-ce
 pygame>=2.1,<3

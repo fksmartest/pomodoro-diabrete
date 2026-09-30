@@ -401,6 +401,14 @@ python pomodoro.py --help
 
 Requisitos: Python 3.x e Pygame. `pytest` só é necessário para rodar os testes.
 
+> **Python 3.14+** (padrão em distribuições recentes, como o Fedora 44): o pygame oficial ainda não publica wheels para `cp314` e o `pip install pygame` tenta compilar da fonte. Use o [pygame-ce](https://pyga.me), que tem a mesma API e wheels para 3.14:
+>
+> ```bash
+> pip install pygame-ce pytest
+> ```
+>
+> O CI roda a suíte nas duas implementações — elas divergem em detalhes que já quebraram o app uma vez.
+
 ---
 
 ## Controles

@@ -7,14 +7,32 @@ on:
 
 jobs:
   pytest:
-    # Roda nos tres sistemas de proposito: os bugs que este CI existe para
-    # pegar so aparecem fora do Windows.
+    name: ${{ matrix.os }} · py${{ matrix.python-version }} · ${{ matrix.flavor }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.11", "3.13"]
-    runs-on: ${{ matrix.os }}
+        # Combinacoes escolhidas a dedo, em vez do produto completo: cada
+        # linha existe por um motivo, anotado ao lado.
+        include:
+          # Por sistema — o que muda aqui e a camada de janela, a fonte
+          # monoespacada disponivel, o backend de notificacao e o caminho
+          # do arquivo de estado.
+          - {os: ubuntu-latest, python-version: "3.11", flavor: pygame}
+          - {os: windows-latest, python-version: "3.11", flavor: pygame}
+          - {os: macos-latest, python-version: "3.11", flavor: pygame}
+
+          # Por implementacao — pygame e pygame-ce divergem em detalhes que
+          # ja quebraram o app uma vez: o pygame-ce preenche as variaveis de
+          # WM_CLASS no import, o oficial nao.
+          - {os: ubuntu-latest, python-version: "3.13", flavor: pygame}
+          - {os: ubuntu-latest, python-version: "3.13", flavor: pygame-ce}
+          - {os: windows-latest, python-version: "3.13", flavor: pygame-ce}
+
+          # Python 3.14: o pygame oficial ainda nao publica wheels para
+          # cp314, entao so o pygame-ce cobre a versao que ja e padrao em
+          # distribuicoes recentes (Fedora 44).
+          - {os: ubuntu-latest, python-version: "3.14", flavor: pygame-ce}
     env:
       SDL_VIDEODRIVER: dummy
       SDL_AUDIODRIVER: dummy
@@ -24,5 +42,18 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: pip install -r requirements-dev.txt
-      - run: pytest tests/ -v
+      - name: Instalar dependencias
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          if [ "${{ matrix.flavor }}" = "pygame-ce" ]; then
+            # pygame e pygame-ce nao convivem: um flavor por job.
+            pip install pytest pygame-ce
+          else
+            pip install -r requirements-dev.txt
+          fi
+      - name: Versao em uso
+        shell: bash
+        run: python -c "import pygame; print(pygame.version.ver, pygame.get_sdl_version())"
+      - name: Testes
+        run: pytest tests/ -v
