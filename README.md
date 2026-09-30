@@ -282,7 +282,9 @@ O estado escolhido é energia 52 — baixa o bastante para os chifres e a cauda 
 
 ### Barra de tarefas
 
-O app define `WM_CLASS` como `pomodoro-pet` (via `SDL_VIDEO_X11_WMCLASS` e `SDL_VIDEO_WAYLAND_WMCLASS`) e o `.desktop` declara o mesmo em `StartupWMClass`. Sem isso o SDL usaria o nome do processo — `python` — e o painel mostraria um ícone genérico sem agrupar a janela com o lançador.
+O app define `WM_CLASS` como `pomodoro-pet` (via `SDL_VIDEO_X11_WMCLASS` e `SDL_VIDEO_WAYLAND_WMCLASS`) e o `.desktop` declara o mesmo em `StartupWMClass`. Sem isso o painel mostra um ícone genérico e abre uma segunda entrada em vez de agrupar a janela com o lançador.
+
+O **pygame-ce preenche essas variáveis no próprio import**, derivando o valor de `sys.argv[0]` — vira `pomodoro.py`, ou `__main__.py` sob `python -m`. Um `setdefault` chegaria tarde nesse caso, então `claim_wm_class()` sobrescreve os valores que claramente são esse automatismo (terminados em `.py`, `python`, `python3`, vazio) e respeita qualquer outro que você tenha definido. É chamado no import e de novo antes de criar a janela, porque o SDL só lê as variáveis nesse momento.
 
 ---
 

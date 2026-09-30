@@ -25,10 +25,41 @@ class TestWmClass:
         import pomodoro
         assert pomodoro.WM_CLASS == NAME
 
-    def test_both_backends_are_set(self):
-        import pomodoro                      # noqa: F401  (define no import)
+    def test_both_backends_are_claimed(self):
+        from pomodoro import claim_wm_class, WM_CLASS_VARS
+        env = claim_wm_class(env={})
+        assert [env[var] for var in WM_CLASS_VARS] == [NAME, NAME]
+
+    @pytest.mark.parametrize("existing", [
+        "python",           # nome do processo
+        "python3",
+        "__main__.py",      # sob `python -m pytest`
+        "pomodoro.py",      # o que o pygame-ce deriva de sys.argv[0]
+        "",
+        None,
+    ])
+    def test_overrides_values_the_toolkit_invented(self, existing):
+        """O pygame-ce preenche a variavel no import; nao e escolha do usuario."""
+        from pomodoro import claim_wm_class
+        env = {} if existing is None else {"SDL_VIDEO_X11_WMCLASS": existing}
+        assert claim_wm_class(env=env)["SDL_VIDEO_X11_WMCLASS"] == NAME
+
+    def test_respects_a_deliberate_value(self):
+        from pomodoro import claim_wm_class
+        env = {"SDL_VIDEO_X11_WMCLASS": "meu-overlay",
+               "SDL_VIDEO_WAYLAND_WMCLASS": "meu-overlay"}
+        assert claim_wm_class(env=env)["SDL_VIDEO_X11_WMCLASS"] == "meu-overlay"
+
+    def test_window_creation_claims_it_even_if_pygame_came_first(self):
+        """Regressao: import de pygame antes deste modulo perdia o WM_CLASS."""
+        import pomodoro
+        from storage import StateStore
+        os.environ["SDL_VIDEO_X11_WMCLASS"] = "__main__.py"
+        w = pomodoro.PetWindow(focus_duration=2, break_duration=1, mute=True,
+                               notify=False, scale=1,
+                               store=StateStore(enabled=False))
         assert os.environ["SDL_VIDEO_X11_WMCLASS"] == NAME
-        assert os.environ["SDL_VIDEO_WAYLAND_WMCLASS"] == NAME
+        w.running = False
 
     def test_desktop_entry_matches_the_app(self):
         with open(TEMPLATE, encoding="utf-8") as handle:

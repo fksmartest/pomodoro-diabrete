@@ -26,12 +26,35 @@ import sys
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
-# Identidade da janela para o gerenciador de janelas. Sem isso o SDL usa o
-# nome do processo ("python") e a barra de tarefas nao consegue ligar a
-# janela ao lancador .desktop — aparece com icone generico e nao agrupa.
+# Identidade da janela para o gerenciador de janelas. Sem isso a barra de
+# tarefas nao liga a janela ao lancador .desktop — icone generico e uma
+# segunda entrada no painel em vez de agrupar.
 WM_CLASS = "pomodoro-pet"
-os.environ.setdefault("SDL_VIDEO_X11_WMCLASS", WM_CLASS)
-os.environ.setdefault("SDL_VIDEO_WAYLAND_WMCLASS", WM_CLASS)
+WM_CLASS_VARS = ("SDL_VIDEO_X11_WMCLASS", "SDL_VIDEO_WAYLAND_WMCLASS")
+
+# O pygame-ce preenche essas variaveis no proprio import, derivando o valor
+# de sys.argv[0] — vira "pomodoro.py", ou "__main__.py" sob `python -m`. Um
+# setdefault chegaria tarde nesse caso, entao sobrescrevemos os valores que
+# claramente sao esse automatismo e respeitamos os que o usuario escolheu.
+AUTO_WM_CLASS = ("python", "python3", "__main__.py", "")
+
+
+def _is_auto_wm_class(value):
+    if value is None or value in AUTO_WM_CLASS:
+        return True
+    return value.endswith(".py")
+
+
+def claim_wm_class(env=None, name=WM_CLASS):
+    """Assume a identidade da janela, sem pisar num valor deliberado."""
+    env = os.environ if env is None else env
+    for var in WM_CLASS_VARS:
+        if _is_auto_wm_class(env.get(var)):
+            env[var] = name
+    return env
+
+
+claim_wm_class()
 
 import pygame
 
@@ -262,6 +285,10 @@ class PetWindow:
     def __init__(self, focus_duration=25 * 60, break_duration=5 * 60,
                  opaque=False, mute=False, scale=None, notify=True,
                  store=None):
+        # De novo aqui: o SDL le essas variaveis ao criar a janela, e se
+        # algum outro modulo importou pygame antes deste, a chamada no topo
+        # do modulo chegou tarde demais.
+        claim_wm_class()
         pygame.init()
         pygame.display.set_caption("Pomodoro Pet")
 
