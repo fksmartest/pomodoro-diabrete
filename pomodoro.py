@@ -14,6 +14,10 @@ Controles:
     S .................. pular fase
     R .................. reset
     ESC ................ sair
+
+Flags: --demo (ciclos curtos), --opaque (sem transparencia), --mute (sem som).
+Transparencia, sempre-no-topo e arrastar dependem da API do Windows; fora dele
+a janela abre opaca e o gerenciador de janelas cuida do resto (ver README).
 """
 
 import math
@@ -28,12 +32,20 @@ from pet import (
     PomodoroPet, FOCUS, BREAK,
     FOCUS_DONE, BREAK_DONE, BREAK_STARTED,
 )
+from sound import Chime
 
 WIDTH, HEIGHT = 240, 168
 FPS = 60
 
 SPRITE = 64          # resolucao logica do bichinho (pixel art)
 SCALE = 2            # ampliacao com nearest-neighbor
+
+# Consolas so existe no Windows; SysFont aceita uma lista e usa a primeira
+# que encontrar, entao o layout continua monoespacado no Linux e no macOS.
+MONO = ("consolas,dejavu sans mono,liberation mono,jetbrains mono,"
+        "menlo,monaco,courier new,monospace")
+BUTTON_SIZES = (13, 12, 11, 10, 9)   # do maior para o menor; ver _button_font
+BUTTON_PADDING = 8                   # folga minima entre texto e borda
 
 MAGIC = (255, 0, 255)     # cor-chave: vira 100% transparente (Windows)
 REVEAL_SPEED = 6.0        # velocidade da transicao compacto <-> expandido
@@ -161,6 +173,9 @@ class _WindowDrag:
         )
 
     def cursor_pos(self):
+        """Posicao global do cursor; (0, 0) quando a API nativa nao existe."""
+        if not self.ok:
+            return (0, 0)
         pt = self._wintypes.POINT()
         self._user32.GetCursorPos(self._ctypes.byref(pt))
         return pt.x, pt.y
@@ -171,6 +186,9 @@ class _WindowDrag:
         self._user32.MoveWindow(self.hwnd, x, y, WIDTH, HEIGHT, True)
 
     def top_left(self):
+        """Canto superior esquerdo da janela; (0, 0) sem a API nativa."""
+        if not self.ok:
+            return (0, 0)
         rect = self._wintypes.RECT()
         self._user32.GetWindowRect(self.hwnd, self._ctypes.byref(rect))
         return rect.left, rect.top
@@ -207,27 +225,36 @@ class _WindowDrag:
 
 class PetWindow:
     def __init__(self, focus_duration=25 * 60, break_duration=5 * 60,
-                 opaque=False):
+                 opaque=False, mute=False):
         pygame.init()
         pygame.display.set_caption("Pomodoro Pet")
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT), pygame.NOFRAME)
         self.clock = pygame.time.Clock()
-        self.base = BG if opaque else MAGIC
 
         self.pet = PomodoroPet(focus_duration=focus_duration,
                                break_duration=break_duration)
 
-        self.font_compact = pygame.font.SysFont("consolas", 34, bold=True)
-        self.font_timer = pygame.font.SysFont("consolas", 26, bold=True)
-        self.font_label = pygame.font.SysFont("consolas", 12, bold=True)
-        self.font_button = pygame.font.SysFont("consolas", 13, bold=True)
-        self.font_small = pygame.font.SysFont("consolas", 12)
-        self.font_tiny = pygame.font.SysFont("consolas", 11)
+        self.font_compact = pygame.font.SysFont(MONO, 34, bold=True)
+        self.font_timer = pygame.font.SysFont(MONO, 26, bold=True)
+        self.font_label = pygame.font.SysFont(MONO, 12, bold=True)
+        # A fonte de fallback nao tem a largura da Consolas, entao os rotulos
+        # sao medidos e o botao escolhe o maior corpo que ainda cabe.
+        self.font_buttons = [pygame.font.SysFont(MONO, size, bold=True)
+                             for size in BUTTON_SIZES]
+        self.font_button = self.font_buttons[0]
+        self.font_small = pygame.font.SysFont(MONO, 12)
+        self.font_tiny = pygame.font.SysFont(MONO, 11)
 
         self.drag = _WindowDrag()
         self.drag.set_topmost()
         if not opaque:
             self.drag.enable_transparency()
+
+        # A cor-chave so faz sentido quando a layered window existe. Fora do
+        # Windows (ou se a chamada falhar) ela pintaria a janela de magenta.
+        self.base = MAGIC if self.drag.transparent else BG
+
+        self.chime = Chime(enabled=not mute)
 
         self.pressed = False
         self.drag_cursor = (0, 0)
@@ -322,11 +349,17 @@ class PetWindow:
         """Botao unico: inicia/pausa ou marca o inicio da proxima fase."""
         if self.pet.toggle() == BREAK_STARTED:
             self.joy = JOY_TIME
+            self.chime.joy()
 
     def _skip(self):
         event = self.pet.skip()
         if event in (FOCUS_DONE, BREAK_DONE):
-            self.alert = ALERT_TIME
+            self._phase_done()
+
+    def _phase_done(self):
+        """Fim de fase: pulso visual + bipe, ja que a troca e manual."""
+        self.alert = ALERT_TIME
+        self.chime.alert()
 
     # --- loop ---
     def run(self):
@@ -341,7 +374,7 @@ class PetWindow:
     def _update(self, dt):
         for event in self.pet.tick(dt):
             if event in (FOCUS_DONE, BREAK_DONE):
-                self.alert = ALERT_TIME
+                self._phase_done()
         self.joy = max(0.0, self.joy - dt)
         self.alert = max(0.0, self.alert - dt)
 
@@ -427,6 +460,13 @@ class PetWindow:
         if self.alert > 0:
             self._draw_alert(EXPANDED_PET[0], EXPANDED_PET[1] - 58)
 
+    def _button_font(self, label, max_width):
+        """Maior corpo da lista cujo rotulo ainda cabe na largura pedida."""
+        for font in self.font_buttons:
+            if font.size(label)[0] <= max_width:
+                return font
+        return self.font_buttons[-1]
+
     def _button(self, rect, label, primary=False):
         hovered = rect.collidepoint(pygame.mouse.get_pos())
         active = primary and (self.pet.awaiting or not self.pet.running)
@@ -434,8 +474,8 @@ class PetWindow:
         color = mix(base, (255, 255, 255), 0.25 if hovered else 0.0)
         pygame.draw.rect(self.screen, color, rect, border_radius=5)
         pygame.draw.rect(self.screen, shade(PANEL, 1.9), rect, 1, border_radius=5)
-        txt = self.font_button.render(label, False,
-                                      (20, 22, 28) if active else TEXT)
+        font = self._button_font(label, rect.width - BUTTON_PADDING)
+        txt = font.render(label, False, (20, 22, 28) if active else TEXT)
         self.screen.blit(txt, txt.get_rect(center=rect.center))
 
     def _draw_alert(self, x, y):
@@ -706,17 +746,40 @@ class PetWindow:
             self.screen.blit(extra, (ENERGY_BAR.x + 52 + 6 * 14, CYCLES_Y - 6))
 
 
+USAGE = """Pomodoro Pet — timer Pomodoro com um monstrengo que cansa e descansa.
+
+    python pomodoro.py [--demo] [--opaque] [--mute] [--help]
+
+    --demo     ciclos curtos (6s de foco / 4s de pausa) para ver o fluxo
+    --opaque   forca a janela opaca (ignora a transparencia do Windows)
+    --mute     sem bipes no fim de fase
+"""
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
+    if "--help" in argv or "-h" in argv:
+        print(USAGE)
+        return 0
+    unknown = [a for a in argv
+               if a not in ("--demo", "--opaque", "--mute")]
+    if unknown:
+        print(f"argumento desconhecido: {' '.join(unknown)}\n")
+        print(USAGE)
+        return 2
+
     demo = "--demo" in argv
     opaque = "--opaque" in argv
+    mute = "--mute" in argv
     if demo:
-        window = PetWindow(focus_duration=6, break_duration=4, opaque=opaque)
+        window = PetWindow(focus_duration=6, break_duration=4,
+                           opaque=opaque, mute=mute)
         window.pet.start()
     else:
-        window = PetWindow(opaque=opaque)
+        window = PetWindow(opaque=opaque, mute=mute)
     window.run()
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
