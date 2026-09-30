@@ -24,7 +24,19 @@ A janela é feita para ficar discretamente na tela sem atrapalhar o trabalho. El
 
 A transição é suave (`REVEAL_SPEED`) e disparada por `pygame.mouse.get_focused()` — basta o cursor entrar na janela. Para a transparência, a janela vira uma *layered window* do Windows (`WS_EX_LAYERED` + `SetLayeredWindowAttributes` com `LWA_COLORKEY | LWA_ALPHA`): tudo que é pintado com a cor-chave `MAGIC` fica invisível e o restante recebe a opacidade atual.
 
-> Transparência é **Windows-only**. Em outros sistemas, ou rodando com `--opaque`, a janela abre opaca normalmente (o resto continua igual).
+> Transparência é **Windows-only**. Em outros sistemas a janela abre opaca automaticamente — não é preciso passar `--opaque`, que serve para forçar o modo opaco também no Windows.
+
+### Fora do Windows
+
+O app roda em Linux e macOS, com três recursos da janela que dependem da API nativa do Windows e ficam desligados:
+
+| Recurso | Windows | Linux / macOS |
+|---|---|---|
+| Fundo transparente | sim | janela opaca |
+| Sempre no topo | automático | regra do gerenciador de janelas |
+| Arrastar clicando no corpo | sim | atalho do sistema |
+
+No KDE Plasma, os dois últimos saem de graça: **Meta + arrastar** move a janela e **Meta + PgUp** (ou uma regra do KWin em *Configurações da janela → Manter acima das outras*) fixa ela no topo. No GNOME, `super + arrastar` e a extensão de *always on top*. No macOS, arrastar funciona pela própria janela sem moldura.
 
 ---
 
@@ -38,6 +50,7 @@ A transição é suave (`REVEAL_SPEED`) e disparada por `pygame.mouse.get_focuse
   - [Modelo de energia](#modelo-de-energia)
   - [Humor e expressões](#humor-e-expressões)
   - [Animações](#animações)
+  - [Som](#som)
 - [Arquitetura](#arquitetura)
   - [Módulos](#módulos)
   - [API de `pet.py`](#api-de-petpy)
@@ -165,9 +178,17 @@ Prioridade de expressão em `_expression()`: animação de alegria > pausa recup
 
 | Animação | Gatilho | Duração | Efeito |
 |----------|---------|---------|--------|
-| Alerta | fim de fase (`FOCUS_DONE`/`BREAK_DONE`) | 1,6 s | "!" pulsando + botão com brilho |
-| Alegria | início da pausa (`BREAK_STARTED`) | 1,8 s | pulo, estrelas girando e anel de destaque |
+| Alerta | fim de fase (`FOCUS_DONE`/`BREAK_DONE`) | 1,6 s | "!" pulsando + botão com brilho + bipe |
+| Alegria | início da pausa (`BREAK_STARTED`) | 1,8 s | pulo, estrelas girando, anel de destaque + arpejo |
 | Respiro/hover | sempre | contínuo | corpo balança; no foco é mais rápido que no descanso |
+
+### Som
+
+Como a troca de fase é manual, o fim do tempo precisa de um aviso que funcione **com o app atrás de outra janela** — senão o timer chega a 00:00 e fica esperando sem que você perceba. Daí o bipe.
+
+Os sons são sintetizados em `sound.py` com a stdlib (`array` + `math`) e entregues ao mixer como buffer cru, então o projeto continua **sem assets externos e com uma única dependência**. Duas notas subindo no fim de fase, um arpejo de quatro notas na comemoração, ambos com rampa de entrada e saída para não estalar.
+
+Se o mixer não abrir — máquina sem placa de som, container, servidor de áudio ausente — o `Chime` fica mudo em vez de derrubar o app. Para silenciar por opção, use `--mute`.
 
 ---
 
@@ -274,13 +295,15 @@ Modo demo, com ciclos curtos (6 s de foco / 4 s de pausa) para ver o fluxo compl
 python pomodoro.py --demo
 ```
 
-Em máquinas sem a transparência (ou para forçar a janela opaca), use `--opaque`:
+Para forçar a janela opaca no Windows, ou rodar sem som:
 
 ```bash
 python pomodoro.py --opaque
+python pomodoro.py --mute
+python pomodoro.py --help
 ```
 
-Requisitos: Python 3.x e Pygame.
+Requisitos: Python 3.x e Pygame. `pytest` só é necessário para rodar os testes.
 
 ---
 
@@ -293,7 +316,7 @@ Requisitos: Python 3.x e Pygame.
 | Pular fase | Botão `pular` ou `S` |
 | Novo ciclo (reset) | Botão `reset`, clique direito ou `R` |
 | Sair | Botão `sair` ou `Esc` |
-| Mover a janela | Arrastar (fora dos botões) |
+| Mover a janela | Arrastar (fora dos botões); no Linux, `Meta` + arrastar |
 
 O botão principal muda de rótulo conforme o contexto: `iniciar foco`, `pausar`, `retomar` e `comecar pausa`. Os olhos do monstrengo acompanham o mouse.
 
@@ -317,21 +340,28 @@ Todos em `pet.py` (mecânica) e `pomodoro.py` (visual):
 | `MAGIC` | `pomodoro.py` | `(255,0,255)` | cor-chave que vira transparente |
 | `JOY_TIME` / `ALERT_TIME` | `pomodoro.py` | `1.8` / `1.6` | duração das animações (s) |
 | `ENERGY_STOPS` | `pomodoro.py` | 4 cores | paleta da barra e do corpo |
+| `MONO` | `pomodoro.py` | lista | fontes monoespaçadas, da preferida ao fallback genérico |
+| `BUTTON_SIZES` | `pomodoro.py` | `13..9` | corpos testados até o rótulo caber no botão |
+| `AMPLITUDE` | `sound.py` | `0.28` | volume dos bipes (0–1) |
+| `ALERT_NOTES` / `JOY_NOTES` | `sound.py` | — | notas `(Hz, segundos)` de cada som |
 
 ---
 
 ## Estrutura do projeto
 
 ```
-pomodoro-elen/
+pomodoro-diabrete/
 ├── pet.py                     # lógica pura (sem Pygame)
 ├── pomodoro.py                # app Pygame (render + loop)
+├── sound.py                   # bipes sintetizados (sem assets)
 ├── requirements.txt
 ├── README.md
 └── tests/
     ├── conftest.py            # adiciona a raiz ao sys.path
     ├── test_pet.py            # testes de lógica
-    └── test_pomodoro.py       # testes de render headless
+    ├── test_pomodoro.py       # testes de render headless
+    ├── test_sound.py          # síntese e degradação sem áudio
+    └── test_portability.py    # regressões de Linux/macOS
 ```
 
 ---
@@ -339,12 +369,14 @@ pomodoro-elen/
 ## Testes
 
 ```bash
-pip install pytest
+pip install -r requirements-dev.txt
 pytest tests/ -v
 ```
 
 - `test_pet.py` cobre formatação de tempo, controles, máquina de estados (`awaiting`, `advance`), modelo de energia, humor e progresso. Não abre janela.
 - `test_pomodoro.py` roda com o driver de vídeo `dummy` (`SDL_VIDEODRIVER=dummy`) para validar a renderização de cada humor, o rótulo do botão e a animação de alegria sem abrir janela.
+- `test_sound.py` valida a síntese das ondas e garante que a ausência de dispositivo de áudio vira silêncio, não exceção. Usa um dublê do mixer.
+- `test_portability.py` cobre as regressões de Linux/macOS: clique sem a API do Windows, cor de fundo, rótulos que cabem nos botões e disparo dos bipes.
 
 ---
 
@@ -359,7 +391,6 @@ pytest tests/ -v
 
 ## Possíveis extensões
 
-- Sons ao fim de fase e na comemoração.
 - Ciclos longos de descanso (a cada 4 focos, uma pausa maior).
 - Persistência de energia/ciclos entre sessões.
 - Personalização do bichinho (nome, cores, acessórios).
